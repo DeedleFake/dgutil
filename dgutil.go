@@ -59,7 +59,9 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 	}
 	defer dg.Close()
 
-	var s Setup
+	s := Setup{
+		dg: dg,
+	}
 	err = setup(&s)
 	if err != nil {
 		return err
