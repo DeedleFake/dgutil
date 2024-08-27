@@ -41,7 +41,7 @@ func (s *Setup) RegisterCommands(commands iter.Seq[*discordgo.ApplicationCommand
 
 func Run(ctx context.Context, setup func(*Setup) error) error {
 	token, ok := os.LookupEnv("DISCORD_TOKEN")
-	if ok {
+	if !ok {
 		return ErrNoToken
 	}
 
