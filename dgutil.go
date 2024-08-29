@@ -31,10 +31,18 @@ func (s *Setup) Session() *discordgo.Session {
 // [discordgo.Session] for every guild that the bot is in. When the
 // bot exits, the commands will be automatically unregistered.
 func (s *Setup) RegisterCommands(commands iter.Seq[*discordgo.ApplicationCommand]) error {
+	// TODO: Move registration into event handlers.
+
 	dg := s.Session()
-	for _, guild := range dg.State.Guilds {
+
+	dg.State.RLock()
+	guilds := dg.State.Guilds
+	userID := dg.State.User.ID
+	dg.State.RUnlock()
+
+	for _, guild := range guilds {
 		for cmd := range commands {
-			r, err := dg.ApplicationCommandCreate(dg.State.User.ID, guild.ID, cmd)
+			r, err := dg.ApplicationCommandCreate(userID, guild.ID, cmd)
 			if err != nil {
 				return fmt.Errorf("register command %q: %w", cmd.Name, err)
 			}
@@ -93,9 +101,13 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 		return err
 	}
 
+	dg.State.RLock()
+	userID := dg.State.User.ID
+	dg.State.RUnlock()
+
 	for _, cmd := range s.cmds {
 		defer func() {
-			err := dg.ApplicationCommandDelete(dg.State.User.ID, cmd.GuildID, cmd.ID)
+			err := dg.ApplicationCommandDelete(userID, cmd.GuildID, cmd.ID)
 			if err != nil {
 				slog.Error("unregister command", "command", cmd.Name, "err", err)
 			}
