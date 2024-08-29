@@ -82,7 +82,7 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 		registeredm.Lock()
 		defer registeredm.Unlock()
 		for _, guild := range r.Guilds {
-			slog := slog.With("guild_id", guild.ID, "guild_name", guild.Name)
+			slog := slog.With("guild_id", guild.ID)
 			for _, cmd := range s.cmds {
 				slog := slog.With("command", cmd.Name)
 
