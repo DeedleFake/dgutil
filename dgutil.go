@@ -7,7 +7,9 @@ import (
 	"iter"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -30,29 +32,8 @@ func (s *Setup) Session() *discordgo.Session {
 // RegisterCommands registers a set of commands with the underlying
 // [discordgo.Session] for every guild that the bot is in. When the
 // bot exits, the commands will be automatically unregistered.
-func (s *Setup) RegisterCommands(commands iter.Seq[*discordgo.ApplicationCommand]) error {
-	// TODO: Move registration into event handlers.
-
-	dg := s.Session()
-
-	dg.State.RLock()
-	guilds := dg.State.Guilds
-	userID := dg.State.User.ID
-	dg.State.RUnlock()
-
-	for _, guild := range guilds {
-		for cmd := range commands {
-			r, err := dg.ApplicationCommandCreate(userID, guild.ID, cmd)
-			if err != nil {
-				return fmt.Errorf("register command %q: %w", cmd.Name, err)
-			}
-
-			slog.Info("command registered", "command", r.Name, "guild_id", guild.ID, "guild_name", guild.Name)
-			s.cmds = append(s.cmds, r)
-		}
-	}
-
-	return nil
+func (s *Setup) RegisterCommands(commands iter.Seq[*discordgo.ApplicationCommand]) {
+	s.cmds = slices.AppendSeq(s.cmds, commands)
 }
 
 // AddHandlerWithContext adds an event handler to a
@@ -83,15 +64,6 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 	if err != nil {
 		return fmt.Errorf("create Discord session: %w", err)
 	}
-	dg.AddHandler(func(dg *discordgo.Session, r *discordgo.Ready) {
-		slog.Info("authenticated successfully", "user", r.User)
-	})
-
-	err = dg.Open()
-	if err != nil {
-		return fmt.Errorf("open Discord session: %w", err)
-	}
-	defer dg.Close()
 
 	s := Setup{
 		dg: dg,
@@ -101,18 +73,54 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 		return err
 	}
 
-	dg.State.RLock()
-	userID := dg.State.User.ID
-	dg.State.RUnlock()
+	var registered []*discordgo.ApplicationCommand
+	var registeredm sync.Mutex
 
-	for _, cmd := range s.cmds {
-		defer func() {
+	dg.AddHandler(func(dg *discordgo.Session, r *discordgo.Ready) {
+		slog.Info("authenticated successfully", "user", r.User)
+
+		registeredm.Lock()
+		defer registeredm.Unlock()
+		for _, guild := range r.Guilds {
+			slog := slog.With("guild_id", guild.ID, "guild_name", guild.Name)
+			for _, cmd := range s.cmds {
+				slog := slog.With("command", cmd.Name)
+
+				reg, err := dg.ApplicationCommandCreate(r.User.ID, guild.ID, cmd)
+				if err != nil {
+					slog.Error("failed to register command", "err", err)
+					continue
+				}
+
+				slog.Info("command registered")
+				registered = append(registered, reg)
+			}
+		}
+	})
+
+	err = dg.Open()
+	if err != nil {
+		return fmt.Errorf("open Discord session: %w", err)
+	}
+	defer dg.Close()
+
+	defer func() {
+		dg.State.RLock()
+		userID := dg.State.User.ID
+		dg.State.RUnlock()
+
+		registeredm.Lock()
+		defer registeredm.Unlock()
+		for _, cmd := range registered {
+			slog := slog.With("guild_id", cmd.GuildID, "command", cmd.Name)
 			err := dg.ApplicationCommandDelete(userID, cmd.GuildID, cmd.ID)
 			if err != nil {
-				slog.Error("unregister command", "command", cmd.Name, "err", err)
+				slog.Error("failed to unregister command", "err", err)
+				continue
 			}
-		}()
-	}
+			slog.Info("command unregistered")
+		}
+	}()
 
 	<-ctx.Done()
 	return nil
