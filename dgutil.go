@@ -73,28 +73,34 @@ func Run(ctx context.Context, setup func(*Setup) error) error {
 		return err
 	}
 
-	var registered []*discordgo.ApplicationCommand
-	var registeredm sync.Mutex
-
 	dg.AddHandler(func(dg *discordgo.Session, r *discordgo.Ready) {
 		slog.Info("authenticated successfully", "user", r.User)
+	})
+
+	var registered []*discordgo.ApplicationCommand
+	var registeredm sync.Mutex
+	dg.AddHandler(func(dg *discordgo.Session, g *discordgo.GuildCreate) {
+		slog := slog.With("guild_id", g.ID, "guild_name", g.Name)
+		slog.Info("entered guild")
+
+		dg.State.RLock()
+		userID := dg.State.User.ID
+		dg.State.RUnlock()
 
 		registeredm.Lock()
 		defer registeredm.Unlock()
-		for _, guild := range r.Guilds {
-			slog := slog.With("guild_id", guild.ID)
-			for _, cmd := range s.cmds {
-				slog := slog.With("command", cmd.Name)
 
-				reg, err := dg.ApplicationCommandCreate(r.User.ID, guild.ID, cmd)
-				if err != nil {
-					slog.Error("failed to register command", "err", err)
-					continue
-				}
+		for _, cmd := range s.cmds {
+			slog := slog.With("command", cmd.Name)
 
-				slog.Info("command registered")
-				registered = append(registered, reg)
+			reg, err := dg.ApplicationCommandCreate(userID, g.ID, cmd)
+			if err != nil {
+				slog.Error("failed to register command", "err", err)
+				continue
 			}
+
+			slog.Info("command registered")
+			registered = append(registered, reg)
 		}
 	})
 
