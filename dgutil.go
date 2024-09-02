@@ -7,6 +7,7 @@ import (
 	"iter"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -36,12 +37,20 @@ func (s *Setup) RegisterCommands(commands iter.Seq[*discordgo.ApplicationCommand
 	s.cmds = slices.AppendSeq(s.cmds, commands)
 }
 
-// AddHandlerWithContext adds an event handler to a
-// [discordgo.Session], but includes an extra context argument. The
+// AddHandler adds an event handler to a [discordgo.Session], but
+// includes an extra context argument and panic protection. The
 // context provided to the handler itself will be a child of ctx that
 // will be canceled when the handler returns.
-func AddHandlerWithContext[T any](ctx context.Context, dg *discordgo.Session, h func(context.Context, *discordgo.Session, T)) func() {
+func AddHandler[T any](ctx context.Context, dg *discordgo.Session, h func(context.Context, *discordgo.Session, T)) func() {
 	return dg.AddHandler(func(dg *discordgo.Session, ev T) {
+		defer func() {
+			r := recover()
+			if r != nil {
+				slog.Error("recovered from panic in handler", "value", r)
+				debug.PrintStack()
+			}
+		}()
+
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
